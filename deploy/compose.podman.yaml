@@ -1,0 +1,11 @@
+# Podman-only overlay (added by scripts/run.sh when podman is used).
+# Maps the invoking host user to the image's nonroot uid 65532, so 0600 secret
+# files owned by you are readable inside the container without loosening them.
+x-podman:
+  in_pod: false
+
+services:
+  venue-hl:
+    userns_mode: "keep-id:uid=65532,gid=65532"
+  gateway:
+    userns_mode: "keep-id:uid=65532,gid=65532"

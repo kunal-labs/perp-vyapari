@@ -105,7 +105,7 @@ MANAGED=1 make run                    # managed: also mounts the agent key file 
 - Gateway: `TELEGRAM_OWNER_ID`, `TELEGRAM_TOKEN_HOST_FILE`.
 - Both: `RUST_LOG`.
 
-The Telegram token is mounted into the gateway only. Exchange keys are mounted into the venue service only.
+The Telegram token is mounted into the gateway only. Exchange keys are mounted into the venue service only. Secret files can stay `chmod 600`: `make run` maps the container user to you (on Podman through `deploy/compose.podman.yaml`; on Docker by running as your user ID).
 
 **Try commands without Telegram** against running venue services:
 
@@ -120,7 +120,7 @@ proto/venue.proto        gRPC contract shared by every venue
 crates/venue-proto/      Rust bindings generated from the contract
 gateway/                 Telegram gateway
 venues/hyperliquid/      Hyperliquid venue service
-deploy/                  Containerfiles, compose.yaml, compose.managed.yaml, .env.example
+deploy/                  Containerfiles, compose.yaml (+ managed and podman overlays), .env.example
 scripts/                 Logic behind every make target
 ```
 
