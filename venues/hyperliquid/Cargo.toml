@@ -1,0 +1,19 @@
+[package]
+name = "venue-hl"
+description = "Hyperliquid venue service: state sync and active SL/TP management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+venue-proto.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

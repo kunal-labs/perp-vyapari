@@ -1,0 +1,11 @@
+# Managed-mode overlay: mounts the trade-only agent key into venue-hl ONLY.
+services:
+  venue-hl:
+    environment:
+      HL_AGENT_KEY_FILE: /run/secrets/hl_agent_key
+    secrets:
+      - hl_agent_key
+
+secrets:
+  hl_agent_key:
+    file: ${HL_AGENT_KEY_HOST_FILE:?set HL_AGENT_KEY_HOST_FILE in deploy/.env}

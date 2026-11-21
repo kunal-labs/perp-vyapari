@@ -1,0 +1,7 @@
+target/
+deploy/.env
+deploy/secrets/
+secrets/
+*.key
+*.db
+*.sqlite

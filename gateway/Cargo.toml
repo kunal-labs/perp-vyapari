@@ -1,0 +1,18 @@
+[package]
+name = "gateway"
+description = "Telegram gateway: owner auth, confirmations and routing to venue services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+venue-proto.workspace = true
+
+[dev-dependencies]
+venue-hl = { path = "../venues/hyperliquid" }

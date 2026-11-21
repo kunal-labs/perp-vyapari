@@ -1,0 +1,27 @@
+# Read-only stack. For managed mode add compose.managed.yaml (see README).
+services:
+  venue-hl:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile.venue-hl
+    image: perp-vyapari/venue-hl:dev
+    environment:
+      HL_ADDRESS: ${HL_ADDRESS:?set HL_ADDRESS in deploy/.env}
+      HL_TESTNET: ${HL_TESTNET:-true}
+      VENUE_LISTEN_ADDR: 0.0.0.0:50051
+      RUST_LOG: ${RUST_LOG:-info}
+    restart: unless-stopped
+    # No published port: only the gateway talks to the venue, on the compose network.
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile.gateway
+    image: perp-vyapari/gateway:dev
+    environment:
+      VENUES: hl=http://venue-hl:50051
+      HEALTH_SECS: ${HEALTH_SECS:-30}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      - venue-hl
+    restart: unless-stopped

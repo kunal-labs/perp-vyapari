@@ -1,0 +1,228 @@
+// Language-neutral contract between the Telegram gateway and venue services.
+// Every venue (Hyperliquid in Rust, Lighter in Go, ...) implements VenueService.
+//
+// Conventions:
+//   * Prices, sizes and money are decimal strings (no float rounding across languages).
+//   * Sizes are signed: positive = long, negative = short.
+//   * Times are unix milliseconds.
+syntax = "proto3";
+
+package perpvyapari.venue.v1;
+
+option go_package = "github.com/kunall/perp-vyapari/gen/venue/v1;venuev1";
+
+service VenueService {
+  // Liveness, identity and capability of the venue service.
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Read-only views.
+  rpc GetAccount(GetAccountRequest) returns (Account);
+  rpc ListPositions(ListPositionsRequest) returns (ListPositionsResponse);
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+
+  // Protection management (requires MODE_MANAGED).
+  // SetProtection places or replaces the exchange-side stop and targets for a
+  // position and attaches an optional active rule.
+  rpc SetProtection(SetProtectionRequest) returns (ProtectionRule);
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse);
+  rpc CancelRule(CancelRuleRequest) returns (CancelRuleResponse);
+
+  // Close (fully or partially) a position with a reduce-only order.
+  rpc ClosePosition(ClosePositionRequest) returns (ClosePositionResponse);
+
+  // Server-push events: fills, rule actions, alerts, heartbeats.
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+}
+
+enum Mode {
+  MODE_UNSPECIFIED = 0;
+  MODE_READ_ONLY = 1; // address only, no signing key
+  MODE_MANAGED = 2;   // trade-only agent/API key present
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string venue = 1;    // e.g. "hyperliquid"
+  string version = 2;  // service build version
+  Mode mode = 3;
+  string account = 4;  // venue account identifier (address / account index)
+  bool testnet = 5;
+  int64 server_time_ms = 6;
+}
+
+message GetAccountRequest {}
+
+message Account {
+  string account_value = 1;
+  string margin_used = 2;
+  string withdrawable = 3;
+  string unrealized_pnl = 4;
+  int64 as_of_ms = 5;
+}
+
+message ListPositionsRequest {}
+
+message Position {
+  string symbol = 1;
+  string size = 2; // signed
+  string entry_price = 3;
+  string mark_price = 4;
+  string unrealized_pnl = 5;
+  string liquidation_price = 6; // empty if none
+  string leverage = 7;
+  string margin_used = 8;
+  bool has_exchange_stop = 9; // a reduce-only stop exists on the exchange
+}
+
+message ListPositionsResponse {
+  repeated Position positions = 1;
+  int64 as_of_ms = 2;
+}
+
+message ListOrdersRequest {
+  string symbol = 1; // optional filter
+}
+
+enum OrderKind {
+  ORDER_KIND_UNSPECIFIED = 0;
+  ORDER_KIND_LIMIT = 1;
+  ORDER_KIND_STOP_MARKET = 2;
+  ORDER_KIND_TAKE_PROFIT_MARKET = 3;
+  ORDER_KIND_STOP_LIMIT = 4;
+  ORDER_KIND_TAKE_PROFIT_LIMIT = 5;
+}
+
+message Order {
+  string order_id = 1;
+  string symbol = 2;
+  string size = 3; // signed: positive = buy, negative = sell
+  string limit_price = 4;
+  string trigger_price = 5;
+  OrderKind kind = 6;
+  bool reduce_only = 7;
+  int64 created_ms = 8;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+  int64 as_of_ms = 2;
+}
+
+message TrailingStop {
+  oneof distance {
+    string percent = 1; // e.g. "1.5" = 1.5% from best price since activation
+    string absolute = 2; // price units
+  }
+  string activation_price = 3; // optional; trail starts once reached
+}
+
+message Breakeven {
+  string trigger_price = 1;  // when mark crosses this, move stop to entry
+  string offset = 2;         // optional price offset beyond entry (fees)
+}
+
+message TakeProfitLevel {
+  string price = 1;
+  string fraction = 2; // fraction of the position at rule creation, (0,1]
+}
+
+message SetProtectionRequest {
+  string symbol = 1;
+  string stop_price = 2;                    // required: initial exchange-side stop
+  repeated TakeProfitLevel take_profits = 3; // optional ladder
+  TrailingStop trailing = 4;                // optional
+  Breakeven breakeven = 5;                  // optional
+  string idempotency_key = 6;               // gateway-supplied, per confirmed action
+}
+
+enum RuleState {
+  RULE_STATE_UNSPECIFIED = 0;
+  RULE_STATE_ACTIVE = 1;
+  RULE_STATE_DONE = 2;      // position closed / all targets hit
+  RULE_STATE_CANCELLED = 3;
+  RULE_STATE_SUSPENDED = 4; // reconcile mismatch; needs human
+}
+
+message ProtectionRule {
+  string rule_id = 1;
+  SetProtectionRequest spec = 2;
+  RuleState state = 3;
+  string current_stop_price = 4;
+  string note = 5;
+  int64 updated_ms = 6;
+}
+
+message ListRulesRequest {}
+
+message ListRulesResponse {
+  repeated ProtectionRule rules = 1;
+}
+
+message CancelRuleRequest {
+  string rule_id = 1;
+  // Default false: stop active management but LEAVE the exchange-side stop and
+  // targets in place (capital safety). True also cancels them on the exchange.
+  bool remove_exchange_orders = 2;
+}
+
+message CancelRuleResponse {
+  ProtectionRule rule = 1;
+}
+
+message ClosePositionRequest {
+  string symbol = 1;
+  string fraction = 2;        // (0,1], empty = 1
+  string max_slippage_pct = 3; // empty = service default
+  string idempotency_key = 4;
+}
+
+message ClosePositionResponse {
+  string filled_size = 1;
+  string avg_price = 2;
+}
+
+message StreamEventsRequest {}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARN = 2;
+  SEVERITY_CRITICAL = 3;
+}
+
+message Event {
+  int64 time_ms = 1;
+  Severity severity = 2;
+  oneof kind {
+    Heartbeat heartbeat = 10;
+    Fill fill = 11;
+    RuleAction rule_action = 12;
+    Alert alert = 13;
+  }
+}
+
+message Heartbeat {
+  bool venue_stream_connected = 1;
+}
+
+message Fill {
+  string symbol = 1;
+  string size = 2; // signed
+  string price = 3;
+  string fee = 4;
+  string closed_pnl = 5;
+  string order_id = 6;
+}
+
+message RuleAction {
+  string rule_id = 1;
+  string symbol = 2;
+  string description = 3; // human-readable, e.g. "stop 61200 -> 61850 (trail 1.5%)"
+}
+
+message Alert {
+  string symbol = 1; // optional
+  string code = 2;   // e.g. "NO_STOP", "LIQ_DISTANCE", "RECONCILE_MISMATCH"
+  string message = 3;
+}

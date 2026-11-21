@@ -1,0 +1,9 @@
+FROM docker.io/library/rust:1.93-slim-bookworm AS build
+WORKDIR /src
+COPY . .
+RUN cargo build --release --locked -p venue-hl
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=build /src/target/release/venue-hl /usr/local/bin/venue-hl
+EXPOSE 50051
+ENTRYPOINT ["/usr/local/bin/venue-hl"]
