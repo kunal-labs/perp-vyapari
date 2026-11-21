@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+teloxide.workspace = true
+tokio-stream.workspace = true
 tokio.workspace = true
 tonic.workspace = true
 tracing.workspace = true
@@ -15,4 +17,6 @@ tracing-subscriber.workspace = true
 venue-proto.workspace = true
 
 [dev-dependencies]
-venue-hl = { path = "../venues/hyperliquid" }
+serde_json.workspace = true
+tempfile = "3"
+venue-hl = { path = "../venues/hyperliquid", features = ["testing"] }

@@ -5,7 +5,7 @@ Manage perpetual-futures positions from Telegram, with a dedicated service per v
 - **Hyperliquid**: `venues/hyperliquid` (Rust), in progress.
 - **Lighter**: `venues/lighter` (Go), planned.
 
-> **Status:** scaffold. The venue service answers health checks and streams heartbeats; positions, Telegram commands and SL/TP management are not built yet.
+> **Status:** read-only. Telegram shows Hyperliquid balances, positions, orders and PnL, and pushes alerts and fills. Placing or moving stops is not built yet.
 
 ## How it fits together
 
@@ -17,6 +17,30 @@ Telegram  <->  gateway (Rust)  <-- gRPC: proto/venue.proto -->  venue-hl (Rust) 
 - **gateway**: the only component that talks to Telegram. It accepts commands only from the owner's Telegram account, asks for confirmation before any write, and routes each command to a venue. It never holds exchange keys.
 - **venue services**: one per exchange, all implementing the same gRPC contract in `proto/venue.proto`. Each one owns its exchange connection, its local state and its SL/TP manager.
 - **Safety model**: every managed position keeps a real stop order on the exchange. The service moves that stop and never keeps it only in memory, so a crashed service still leaves you protected.
+
+## Telegram commands
+
+The bot answers only its owner (by numeric Telegram user id) in a private chat, and ignores everyone else. `[venue]` is optional; leave it out to query all venues.
+
+| Command | What it shows |
+|---|---|
+| `/acct [venue]` | Equity, unrealised PnL, margin, withdrawable; unified-account USDC collateral |
+| `/pos [venue]` | Positions with entry, mark, leverage, exchange-side stop (or a NO STOP warning), liquidation distance |
+| `/orders [venue] [symbol]` | Open orders including stops and take-profits |
+| `/pnl [venue]` | Unrealised PnL per position |
+| `/alert [venue] <symbol> above\|below <price>` | One-shot price alert |
+| `/alerts [venue]`, `/unalert [venue] <id>` | List or remove price alerts |
+| `/status` | Venue service health, mode and account |
+
+**Pushed automatically:**
+- Fills.
+- Positions without an exchange-side stop.
+- Liquidation getting close.
+- Expensive funding against your position.
+- Price alerts.
+- Venue outages.
+
+Ongoing conditions repeat every `ALERT_REPEAT_MINS` while they last. Price alerts live in memory and are lost on restart.
 
 ## Access modes
 
@@ -34,7 +58,7 @@ Requirements: Rust (stable, 1.93+). Podman or Docker for containers. You don't n
 ```bash
 make build
 make test
-cp deploy/.env.example deploy/.env    # set HL_ADDRESS
+cp deploy/.env.example deploy/.env    # set HL_ADDRESS, TELEGRAM_OWNER_ID, TELEGRAM_TOKEN_HOST_FILE
 make run                              # read-only stack
 MANAGED=1 make run                    # managed: also mounts the agent key file into venue-hl
 ```
@@ -62,15 +86,32 @@ MANAGED=1 make run                    # managed: also mounts the agent key file 
 | `HL_TESTNET` | no | `false` | `true` to use Hyperliquid testnet |
 | `VENUE_LISTEN_ADDR` | no | `0.0.0.0:50051` | gRPC listen address |
 | `HEARTBEAT_SECS` | no | `15` | Heartbeat interval on the event stream |
+| `HL_API_URL` | no | mainnet or testnet | Override the Hyperliquid API base URL |
+| `POLL_SECS` | no | `10` | How often the account is checked for alerts and fills |
+| `LIQ_ALERT_PCT` | no | `5` | Alert when mark is within this % of liquidation |
+| `FUNDING_ALERT_APR_PCT` | no | `100` | Alert when the position pays funding above this annualised % |
+| `ALERT_REPEAT_MINS` | no | `30` | Repeat interval for ongoing alerts |
 
 **gateway**
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
 | `VENUES` | yes | — | Comma list of `name=url`, e.g. `hl=http://venue-hl:50051` |
-| `HEALTH_SECS` | no | `30` | Health-check interval |
+| `TELEGRAM_TOKEN_FILE` | yes | — | File containing the bot token |
+| `TELEGRAM_OWNER_ID` | yes | — | Numeric Telegram user id allowed to use the bot |
 
-**compose** (`deploy/.env`): `HL_ADDRESS`, `HL_TESTNET`, `HL_AGENT_KEY_HOST_FILE` (managed only), `HEALTH_SECS`, `RUST_LOG`.
+**compose** (`deploy/.env`):
+- Venue: `HL_ADDRESS`, `HL_TESTNET`, the alert thresholds, `HL_AGENT_KEY_HOST_FILE` (managed mode only).
+- Gateway: `TELEGRAM_OWNER_ID`, `TELEGRAM_TOKEN_HOST_FILE`.
+- Both: `RUST_LOG`.
+
+The Telegram token is mounted into the gateway only. Exchange keys are mounted into the venue service only.
+
+**Try commands without Telegram** against running venue services:
+
+```bash
+VENUES=hl=http://127.0.0.1:50051 cargo run -p gateway --example ask -- /pos
+```
 
 ## Layout
 
@@ -86,7 +127,7 @@ scripts/                 Logic behind every make target
 ## Roadmap
 
 1. Scaffold (done).
-2. Hyperliquid read-only: Telegram `/pos`, `/orders`, `/pnl`, `/acct`; alerts for liquidation distance, price and funding.
+2. Hyperliquid read-only (done): Telegram `/pos`, `/orders`, `/pnl`, `/acct`; alerts for liquidation distance, price and funding.
 3. Hyperliquid execution: set and modify exchange-side TP/SL with confirm buttons; `/close`. Tested on testnet first.
 4. Active manager: trailing stop, breakeven move, take-profit ladder, saved state, reconcile on restart, watchdog.
 5. Lighter venue in Go against the same contract.

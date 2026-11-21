@@ -1,14 +1,15 @@
-//! Gateway library.
+//! Gateway library: Telegram <-> venue services.
 //!
-//! M0: parses the venue registry and health-checks each venue service.
-//! M1 adds the Telegram bot (owner-only, confirm-before-write).
-//!
-//! | Variable          | Required | Meaning                                                    |
-//! |-------------------|----------|------------------------------------------------------------|
-//! | `VENUES`          | yes      | Comma list `name=url`, e.g. `hl=http://venue-hl:50051`      |
-//! | `HEALTH_SECS`     | no       | Health-check interval (default `30`)                       |
+//! | Variable              | Required | Meaning                                                |
+//! |-----------------------|----------|--------------------------------------------------------|
+//! | `VENUES`              | yes      | Comma list `name=url`, e.g. `hl=http://venue-hl:50051`  |
+//! | `TELEGRAM_TOKEN_FILE` | yes      | File containing the bot token                          |
+//! | `TELEGRAM_OWNER_ID`   | yes      | Numeric Telegram user id allowed to use the bot        |
 
-use std::time::Duration;
+pub mod app;
+pub mod commands;
+pub mod format;
+pub mod telegram;
 
 use anyhow::{bail, Context, Result};
 use venue_proto::v1::{venue_service_client::VenueServiceClient, HealthRequest, HealthResponse};
@@ -51,17 +52,6 @@ pub fn parse_venues(spec: &str) -> Result<Vec<VenueEndpoint>> {
     Ok(out)
 }
 
-pub fn health_interval(raw: Option<String>) -> Result<Duration> {
-    let secs: u64 = raw
-        .unwrap_or_else(|| "30".into())
-        .parse()
-        .context("HEALTH_SECS must be an integer")?;
-    if secs == 0 {
-        bail!("HEALTH_SECS must be > 0");
-    }
-    Ok(Duration::from_secs(secs))
-}
-
 /// One health probe against a venue service.
 pub async fn probe(endpoint: &VenueEndpoint) -> Result<HealthResponse> {
     let mut client = VenueServiceClient::connect(endpoint.url.clone())
@@ -96,12 +86,5 @@ mod tests {
         assert!(parse_venues("HL=http://x").is_err());
         assert!(parse_venues("hl=venue-hl:50051").is_err());
         assert!(parse_venues("hl=http://a,hl=http://b").is_err());
-    }
-
-    #[test]
-    fn health_interval_rules() {
-        assert_eq!(health_interval(None).unwrap(), Duration::from_secs(30));
-        assert!(health_interval(Some("0".into())).is_err());
-        assert!(health_interval(Some("x".into())).is_err());
     }
 }

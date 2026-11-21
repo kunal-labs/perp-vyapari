@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use gateway::{health_interval, parse_venues, probe};
+use gateway::{app::App, parse_venues, probe, telegram};
+use teloxide::Bot;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
-use venue_proto::v1::Mode;
 
 /// Resolves on SIGINT (Ctrl-C) or SIGTERM (container stop).
 async fn shutdown_signal() {
@@ -26,40 +26,28 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,teloxide=warn".into()),
+        )
         .init();
 
     let venues = parse_venues(&std::env::var("VENUES").context("VENUES is required")?)?;
-    let every = health_interval(std::env::var("HEALTH_SECS").ok())?;
-    info!(
-        venues = venues.len(),
-        "gateway starting (M0: health monitor only, Telegram arrives in M1)"
-    );
+    let owner = telegram::parse_owner(std::env::var("TELEGRAM_OWNER_ID").ok())?;
+    let token = telegram::read_token(
+        &std::env::var("TELEGRAM_TOKEN_FILE").context("TELEGRAM_TOKEN_FILE is required")?,
+    )?;
+    info!(venues = venues.len(), "gateway starting");
 
-    let shutdown = shutdown_signal();
-    tokio::pin!(shutdown);
-    let mut tick = tokio::time::interval(every);
-    loop {
-        tokio::select! {
-            _ = tick.tick() => {
-                for v in &venues {
-                    match probe(v).await {
-                        Ok(h) => info!(
-                            venue = %v.name,
-                            kind = %h.venue,
-                            mode = ?Mode::try_from(h.mode).unwrap_or(Mode::Unspecified),
-                            account = %h.account,
-                            testnet = h.testnet,
-                            "healthy"
-                        ),
-                        Err(e) => warn!(venue = %v.name, error = %format!("{e:#}"), "unhealthy"),
-                    }
-                }
+    // One-off startup health log; ongoing liveness comes from each venue's event stream.
+    for v in &venues {
+        match probe(v).await {
+            Ok(h) => {
+                info!(venue = %v.name, kind = %h.venue, account = %h.account, testnet = h.testnet, "venue healthy")
             }
-            _ = &mut shutdown => {
-                info!("shutdown requested");
-                return Ok(());
-            }
+            Err(e) => warn!(venue = %v.name, error = %format!("{e:#}"), "venue not reachable yet"),
         }
     }
+
+    let app = App::new(&venues)?;
+    telegram::run(Bot::new(token), owner, app, shutdown_signal()).await
 }
