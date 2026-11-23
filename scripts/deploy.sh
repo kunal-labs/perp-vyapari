@@ -71,6 +71,6 @@ echo "==> deploy worker pool"
 manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
 render "$TAG" >"$manifest"
-g beta run worker-pools replace "$manifest" --region "$REGION"
+g beta run worker-pools replace "$manifest" # region comes from the manifest's location label
 
 echo "==> done: gcloud beta run worker-pools describe $POOL --project $PROJECT --region $REGION"
