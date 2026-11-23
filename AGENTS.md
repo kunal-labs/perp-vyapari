@@ -1,4 +1,4 @@
-# perp-vyapari — Agent Charter  (v1 · 2026-11-21)
+# perp-vyapari — Agent Charter  (v2 · 2026-11-24)
 > All agents: follow this on every task. If a request conflicts, stop and raise
 > `⚠️ CHARTER CONFLICT: <ID>`. Changes only via @techo Charter Capture or /discuss → ADR.
 
@@ -12,7 +12,7 @@ Manage the owner's Hyperliquid and Lighter perp positions from Telegram, with ve
 ### Code & repo
 - N1 Every execution change is tested on Hyperliquid/Lighter testnet before mainnet.
 ### Build & tooling
-- N2 Extra authorized make targets: tidy-check, image.
+- N2 Extra authorized make targets: tidy-check, image, deploy.
 
 ## Decisions (binding until superseded)
 - D1 Venue-specific services behind one language-neutral gRPC contract (proto/venue.proto): Rust for Hyperliquid, Go for Lighter → user directive, 2026-11-21.
