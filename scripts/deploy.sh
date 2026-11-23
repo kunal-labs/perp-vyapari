@@ -45,8 +45,18 @@ for s in "$TOKEN_SECRET" "$KEY_SECRET"; do
     echo "missing secret '$s': create it with: gcloud secrets create $s --project $PROJECT --data-file=<file>" >&2
     exit 1
   fi
-  g secrets add-iam-policy-binding "$s" --member "serviceAccount:$SA" \
-    --role roles/secretmanager.secretAccessor >/dev/null
+  # A just-created service account can take a short while to become bindable.
+  for attempt in 1 2 3 4 5 6; do
+    if g secrets add-iam-policy-binding "$s" --member "serviceAccount:$SA" \
+         --role roles/secretmanager.secretAccessor >/dev/null 2>&1; then
+      break
+    fi
+    if [[ "$attempt" == 6 ]]; then
+      echo "could not grant $SA access to secret $s" >&2
+      exit 1
+    fi
+    sleep 10
+  done
 done
 
 echo "==> build + push images"
