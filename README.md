@@ -136,11 +136,33 @@ gcloud secrets versions add perp-vyapari-telegram-token --data-file=<file>
 make deploy
 ```
 
+## Replaying the smart SL/TP engine on history
+
+`tools/replay` runs the same engine the bot uses over a year of Hyperliquid prices. It compares "your SL/TP untouched" with several smart-management variants on the same synthetic trades.
+
+```bash
+REPLAY_DATA_DIR=~/scratchpad/momentum-labs/data/history REPLAY_OUT=/tmp/replay \
+  cargo run --release -p replay
+```
+
+Inputs, read-only:
+- `hyperliquid/bars/<COIN>_1s.parquet`: crypto, 1-second closes.
+- `bars/xyz_<COIN>.parquet`: HIP-3 stocks, 1-minute OHLC.
+
+Outputs: `report.md` and `trades.csv`, one row per simulated trade and variant. Optional settings: `REPLAY_SPACING_H` (hours between trades per market, default 4), `REPLAY_SEED`, `REPLAY_THREADS`.
+
+Two more modes use the same engine:
+
+- **Signal entries:** `cargo run --release -p replay -- signals <replay.jsonl> [alert|breakout]`. Uses momentum-labs alert or breakout entries, with a random-entry control on the same markets. Entries happen at the signal bar's close, so there's no look-ahead.
+- **Real trades:** `cargo run --release -p replay -- trades <file.json>`. Replays recorded trades (entry, original SL/TP, candles) and compares the result with what actually happened.
+
 ## Layout
 
 ```
 proto/venue.proto        gRPC contract shared by every venue
 crates/venue-proto/      Rust bindings generated from the contract
+crates/smart-sltp/       Smart stop-loss / take-profit engine (pure logic, shared by live service and replay)
+tools/replay/            Replays the engine over historical prices and writes a comparison report
 gateway/                 Telegram gateway
 venues/hyperliquid/      Hyperliquid venue service
 deploy/                  Containerfiles, compose.yaml (+ managed and podman overlays), .env.example

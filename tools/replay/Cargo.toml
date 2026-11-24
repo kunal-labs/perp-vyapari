@@ -1,0 +1,15 @@
+[package]
+name = "replay"
+description = "Replay the smart SL/TP engine over historical Hyperliquid prices and compare with plain SL/TP"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arrow-array = "60"
+serde.workspace = true
+serde_json.workspace = true
+parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
+smart-sltp = { path = "../../crates/smart-sltp" }
