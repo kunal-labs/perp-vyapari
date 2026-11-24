@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/venue-proto", "gateway", "venues/hyperliquid"]
+members = ["crates/venue-proto", "crates/smart-sltp", "gateway", "venues/hyperliquid", "tools/replay"]
 
 [workspace.package]
 version = "0.1.0"

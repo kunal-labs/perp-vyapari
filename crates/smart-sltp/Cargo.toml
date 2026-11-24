@@ -1,0 +1,9 @@
+[package]
+name = "smart-sltp"
+description = "Pure smart stop-loss / take-profit engine (no I/O), shared by live venue services and the replay tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
