@@ -56,8 +56,12 @@ async fn read_commands_render_venue_data() {
         "{pos}"
     );
 
+    // HIP-3 (xyz dex) positions are included, with their own exchange-side stop.
+    assert!(pos.contains("xyz:NVDA SHORT</b> 3.0 @ 180.00"), "{pos}");
+    assert!(pos.contains("🛡 stop 187.00"), "{pos}");
+
     let acct = app.handle("/acct hl").await.unwrap();
-    assert!(acct.contains("Equity (perps): <b>320.50</b>"), "{acct}");
+    assert!(acct.contains("Equity (perps): <b>420.50</b>"), "{acct}");
     assert!(acct.contains("Collateral (unified USDC): 400.25"), "{acct}");
 
     let orders = app.handle("/orders btc").await.unwrap();
@@ -66,8 +70,17 @@ async fn read_commands_render_venue_data() {
         "{orders}"
     );
 
+    let orders = app.handle("/orders xyz:nvda").await.unwrap();
+    assert!(
+        orders.contains("xyz:NVDA buy 3 stop trigger 187.00 (reduce-only)"),
+        "{orders}"
+    );
+
     let pnl = app.handle("/pnl").await.unwrap();
-    assert!(pnl.contains("-79.50"), "{pnl}");
+    assert!(
+        pnl.contains("-85.50") && pnl.contains("xyz:NVDA -6.00"),
+        "{pnl}"
+    );
 
     let status = app.handle("/status").await.unwrap();
     assert!(status.contains("read-only"), "{status}");

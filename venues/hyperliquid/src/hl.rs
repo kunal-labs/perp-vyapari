@@ -3,9 +3,36 @@
 //! Signing and the `/exchange` endpoint arrive with managed mode; read paths stay
 //! plain HTTP so they work with nothing but the account address.
 
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
+
+/// How long the perp-dex list and account mode are cached (they rarely change).
+const SLOW_CACHE: Duration = Duration::from_secs(3600);
+
+/// The perp dex a coin trades on: `"xyz:NVDA"` -> `"xyz"`, `"BTC"` -> `""` (main dex).
+pub fn dex_of(coin: &str) -> &str {
+    coin.split_once(':').map_or("", |(d, _)| d)
+}
+
+/// Add `"dex"` to a request body for non-main dexes.
+fn with_dex(mut body: Value, dex: &str) -> Value {
+    if !dex.is_empty() {
+        body["dex"] = Value::String(dex.to_string());
+    }
+    body
+}
+
+#[derive(Default)]
+struct SlowCache {
+    dexes: Option<(Instant, Vec<String>)>,
+    abstraction: Option<(Instant, String)>,
+}
 
 pub const MAINNET_URL: &str = "https://api.hyperliquid.xyz";
 pub const TESTNET_URL: &str = "https://api.hyperliquid-testnet.xyz";
@@ -132,6 +159,7 @@ pub struct UserFill {
 pub struct InfoClient {
     http: reqwest::Client,
     url: String,
+    cache: Arc<Mutex<SlowCache>>,
 }
 
 impl InfoClient {
@@ -143,6 +171,7 @@ impl InfoClient {
         Ok(Self {
             http,
             url: format!("{}/info", base_url.trim_end_matches('/')),
+            cache: Arc::new(Mutex::new(SlowCache::default())),
         })
     }
 
@@ -171,9 +200,12 @@ impl InfoClient {
         })
     }
 
-    pub async fn clearinghouse_state(&self, user: &str) -> Result<ClearinghouseState> {
-        self.post(json!({"type": "clearinghouseState", "user": user}))
-            .await
+    pub async fn clearinghouse_state(&self, user: &str, dex: &str) -> Result<ClearinghouseState> {
+        self.post(with_dex(
+            json!({"type": "clearinghouseState", "user": user}),
+            dex,
+        ))
+        .await
     }
 
     pub async fn spot_state(&self, user: &str) -> Result<SpotState> {
@@ -181,21 +213,52 @@ impl InfoClient {
             .await
     }
 
-    pub async fn open_orders(&self, user: &str) -> Result<Vec<FrontendOrder>> {
-        self.post(json!({"type": "frontendOpenOrders", "user": user}))
+    pub async fn open_orders(&self, user: &str, dex: &str) -> Result<Vec<FrontendOrder>> {
+        self.post(with_dex(
+            json!({"type": "frontendOpenOrders", "user": user}),
+            dex,
+        ))
+        .await
+    }
+
+    pub async fn meta_and_ctxs(&self, dex: &str) -> Result<(Meta, Vec<AssetCtx>)> {
+        self.post(with_dex(json!({"type": "metaAndAssetCtxs"}), dex))
             .await
     }
 
-    pub async fn meta_and_ctxs(&self) -> Result<(Meta, Vec<AssetCtx>)> {
-        self.post(json!({"type": "metaAndAssetCtxs"})).await
+    /// All perp dexes: `""` for the main dex, then HIP-3 dex names (e.g. `"xyz"`). Cached.
+    pub async fn perp_dexes(&self) -> Result<Vec<String>> {
+        if let Some((at, d)) = &self.cache.lock().unwrap().dexes {
+            if at.elapsed() < SLOW_CACHE {
+                return Ok(d.clone());
+            }
+        }
+        let v: Vec<Value> = self.post(json!({"type": "perpDexs"})).await?;
+        let mut dexes = vec![String::new()];
+        for d in &v {
+            if let Some(name) = d.get("name").and_then(Value::as_str) {
+                if !name.is_empty() && !dexes.iter().any(|x| x == name) {
+                    dexes.push(name.to_string());
+                }
+            }
+        }
+        self.cache.lock().unwrap().dexes = Some((Instant::now(), dexes.clone()));
+        Ok(dexes)
     }
 
-    /// Account abstraction mode, e.g. "unifiedAccount", "default", "disabled".
+    /// Account abstraction mode, e.g. "unifiedAccount", "default", "disabled". Cached.
     pub async fn user_abstraction(&self, user: &str) -> Result<String> {
+        if let Some((at, a)) = &self.cache.lock().unwrap().abstraction {
+            if at.elapsed() < SLOW_CACHE {
+                return Ok(a.clone());
+            }
+        }
         let v: Value = self
             .post(json!({"type": "userAbstraction", "user": user}))
             .await?;
-        Ok(v.as_str().unwrap_or("unknown").to_string())
+        let a = v.as_str().unwrap_or("unknown").to_string();
+        self.cache.lock().unwrap().abstraction = Some((Instant::now(), a.clone()));
+        Ok(a)
     }
 
     pub async fn fills_since(&self, user: &str, start_ms: i64) -> Result<Vec<UserFill>> {
@@ -208,5 +271,21 @@ fn truncate(s: &str, n: usize) -> &str {
     match s.char_indices().nth(n) {
         Some((i, _)) => &s[..i],
         None => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dex_routing() {
+        assert_eq!(dex_of("xyz:NVDA"), "xyz");
+        assert_eq!(dex_of("BTC"), "");
+        assert_eq!(with_dex(json!({"type": "x"}), ""), json!({"type": "x"}));
+        assert_eq!(
+            with_dex(json!({"type": "x"}), "xyz"),
+            json!({"type": "x", "dex": "xyz"})
+        );
     }
 }

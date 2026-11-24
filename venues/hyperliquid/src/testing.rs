@@ -6,7 +6,8 @@ use axum::{extract::State, routing::post, Json, Router};
 use serde_json::{json, Value};
 use tokio::{net::TcpListener, sync::Mutex};
 
-/// Canned responses keyed by `/info` request `type`. Mutable so tests can change state.
+/// Canned responses keyed by `/info` request `type`, or `type|dex` for HIP-3 dex requests.
+/// Mutable so tests can change state.
 #[derive(Clone, Default)]
 pub struct FakeHl {
     pub responses: Arc<Mutex<std::collections::HashMap<String, Value>>>,
@@ -22,11 +23,22 @@ pub const STATE: &str = r#"{"marginSummary":{"accountValue":"320.5","totalNtlPos
 pub const SPOT: &str =
     r#"{"balances":[{"coin":"USDC","token":0,"total":"400.25","hold":"400.25","entryNtl":"0.0"}]}"#;
 pub const ORDERS: &str = r#"[{"coin":"BTC","side":"A","limitPx":"53000.0","sz":"0.1","oid":11,"timestamp":1795213643987,"isTrigger":true,"triggerPx":"58000.0","reduceOnly":true,"orderType":"Stop Market"}]"#;
+pub const XYZ_STATE: &str = r#"{"marginSummary":{"accountValue":"100.0","totalNtlPos":"540.0","totalRawUsd":"0","totalMarginUsed":"54.0"},
+  "crossMaintenanceMarginUsed":"10.0","withdrawable":"0.0",
+  "assetPositions":[{"type":"oneWay","position":{"coin":"xyz:NVDA","szi":"-3.0","leverage":{"type":"cross","value":10},
+    "entryPx":"180.0","positionValue":"540.0","unrealizedPnl":"-6.0","liquidationPx":"230.0","marginUsed":"54.0"}}],
+  "time":1795222383999}"#;
+pub const XYZ_ORDERS: &str = r#"[{"coin":"xyz:NVDA","side":"B","limitPx":"200","sz":"3","oid":77,"timestamp":0,"isTrigger":true,"triggerPx":"187.0","reduceOnly":true,"orderType":"Stop Market"}]"#;
+pub const XYZ_META: &str = r#"[{"universe":[{"szDecimals":3,"name":"xyz:NVDA","maxLeverage":20}]},[{"funding":"0.00001","markPx":"182.0"}]]"#;
+pub const EMPTY_STATE: &str = r#"{"marginSummary":{"accountValue":"0.0","totalNtlPos":"0.0","totalRawUsd":"0.0","totalMarginUsed":"0.0"},
+  "crossMaintenanceMarginUsed":"0.0","withdrawable":"0.0","assetPositions":[],"time":1795222383000}"#;
+
 pub const META: &str = r#"[{"universe":[{"szDecimals":5,"name":"BTC","maxLeverage":40},{"szDecimals":4,"name":"ETH","maxLeverage":25}]},
   [{"funding":"0.0000125","markPx":"59205.0"},{"funding":"-0.00003","markPx":"3050.0"}]]"#;
 
 impl FakeHl {
-    /// A unified account: BTC long with a stop, ETH short without one.
+    /// A unified account: BTC long with a stop, ETH short without one (main dex), plus an
+    /// xyz:NVDA short with a stop on the `xyz` dex and an empty `flx` dex.
     pub fn with_defaults() -> Self {
         let mut m = std::collections::HashMap::new();
         m.insert(
@@ -47,6 +59,28 @@ impl FakeHl {
         );
         m.insert("userAbstraction".into(), json!("unifiedAccount"));
         m.insert("userFillsByTime".into(), json!([]));
+        m.insert(
+            "perpDexs".into(),
+            json!([null, {"name": "xyz"}, {"name": "flx"}]),
+        );
+        m.insert(
+            "clearinghouseState|xyz".into(),
+            serde_json::from_str(XYZ_STATE).unwrap(),
+        );
+        m.insert(
+            "frontendOpenOrders|xyz".into(),
+            serde_json::from_str(XYZ_ORDERS).unwrap(),
+        );
+        m.insert(
+            "metaAndAssetCtxs|xyz".into(),
+            serde_json::from_str(XYZ_META).unwrap(),
+        );
+        m.insert(
+            "clearinghouseState|flx".into(),
+            serde_json::from_str(EMPTY_STATE).unwrap(),
+        );
+        m.insert("frontendOpenOrders|flx".into(), json!([]));
+        m.insert("metaAndAssetCtxs|flx".into(), json!([{"universe": []}, []]));
         Self {
             responses: Arc::new(Mutex::new(m)),
         }
@@ -65,7 +99,11 @@ impl FakeHl {
 }
 
 async fn info(State(fake): State<FakeHl>, Json(body): Json<Value>) -> Json<Value> {
-    let kind = body["type"].as_str().unwrap_or_default().to_string();
+    let kind = body["type"].as_str().unwrap_or_default();
+    let key = match body["dex"].as_str() {
+        Some(d) if !d.is_empty() => format!("{kind}|{d}"),
+        _ => kind.to_string(),
+    };
     let m = fake.responses.lock().await;
-    Json(m.get(&kind).cloned().unwrap_or(Value::Null))
+    Json(m.get(&key).cloned().unwrap_or(Value::Null))
 }
