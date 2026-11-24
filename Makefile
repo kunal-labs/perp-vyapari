@@ -1,4 +1,4 @@
-.PHONY: build test run clean help tidy-check image
+.PHONY: build test run clean help tidy-check image deploy
 
 build:
 	@./scripts/build.sh
@@ -20,3 +20,6 @@ tidy-check:
 
 image:
 	@./scripts/image.sh
+
+deploy:
+	@./scripts/deploy.sh

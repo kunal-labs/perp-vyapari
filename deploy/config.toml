@@ -1,0 +1,34 @@
+# Cloud Run deployment settings, read by scripts/deploy.sh (`make deploy`).
+# Secrets are NOT stored here: only the Secret Manager secret names.
+
+[gcp]
+project = "kunal-scratch"
+region = "asia-northeast1"          # Tokyo: close to Hyperliquid's API
+artifact_repo = "perp-vyapari"      # Artifact Registry (docker) repo in `region`
+service_account = "perp-vyapari"    # <name>@<project>.iam.gserviceaccount.com
+
+[worker_pool]
+name = "perp-vyapari"
+instances = 1                       # must stay 1: two bots cannot poll one Telegram token
+
+[secrets]
+# Secret Manager secret names. Each is mounted only into the container that needs it.
+telegram_token = "perp-vyapari-telegram-token"   # -> gateway only
+hl_agent_key = ""                                # -> venue-hl only; empty = read-only mode
+
+[gateway]
+cpu = "0.5"
+memory = "256Mi"
+telegram_owner_id = "523450312"
+rust_log = "info,teloxide=warn"
+
+[venue_hl]
+cpu = "0.5"
+memory = "256Mi"
+address = "0x61630aBE770357f4F5EcDfc7f92a2b06CFA410d7"
+testnet = false
+poll_secs = 10
+liq_alert_pct = 5
+funding_alert_apr_pct = 100
+alert_repeat_mins = 30
+rust_log = "info"

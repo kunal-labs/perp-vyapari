@@ -71,6 +71,7 @@ MANAGED=1 make run                    # managed: also mounts the agent key file 
 | `make test` | Tidiness check, `cargo fmt --check`, clippy with warnings as errors, all tests (bounded by `SUITE_TIMEOUT`, default 600 s) |
 | `make run` | Start gateway and venue-hl with compose; `MANAGED=1` adds the agent-key overlay |
 | `make image` | Build the `gateway` and `venue-hl` container images |
+| `make deploy` | Build, push and deploy to a Cloud Run worker pool using `deploy/config.toml` |
 | `make tidy-check` | Check that Makefile recipes are one-line script calls, scripts are well-formed, and this README lists every target |
 | `make clean` | Remove build output |
 | `make help` | List targets |
@@ -113,6 +114,26 @@ The Telegram token is mounted into the gateway only. Exchange keys are mounted i
 VENUES=hl=http://127.0.0.1:50051 cargo run -p gateway --example ask -- /pos
 ```
 
+## Deploying to Cloud Run
+
+Production runs as a **Cloud Run worker pool**. That suits always-on background programs: no HTTP port, no scale-to-zero, exactly one instance. Both containers run in the same instance and talk over localhost.
+
+1. Edit `deploy/config.toml`: project, region, pool name, CPU and memory, account address, alert thresholds, owner Telegram ID, and the **names** of the Secret Manager secrets.
+2. Create each secret once from a file that only you can read:
+   ```bash
+   gcloud secrets create perp-vyapari-telegram-token --project <project> --data-file=$HOME/.config/perp-vyapari/telegram_token
+   ```
+3. Stop any local copy (`make run`). Two bots polling the same Telegram token conflict.
+4. `make deploy`
+
+The script is safe to re-run. It creates the image repository and service account if they're missing, and grants that account access to exactly the secrets listed. Images are tagged with the git commit. The Telegram token is mounted into the gateway container only; the trading key, when added, goes into `venue-hl` only.
+
+To rotate the bot token:
+```bash
+gcloud secrets versions add perp-vyapari-telegram-token --data-file=<file>
+make deploy
+```
+
 ## Layout
 
 ```
@@ -121,7 +142,7 @@ crates/venue-proto/      Rust bindings generated from the contract
 gateway/                 Telegram gateway
 venues/hyperliquid/      Hyperliquid venue service
 deploy/                  Containerfiles, compose.yaml (+ managed and podman overlays), .env.example
-scripts/                 Logic behind every make target
+scripts/                 Logic behind every make target (scripts/lib: deploy manifest renderer)
 ```
 
 ## Roadmap
