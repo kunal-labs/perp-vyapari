@@ -151,6 +151,11 @@ Inputs, read-only:
 
 Outputs: `report.md` and `trades.csv`, one row per simulated trade and variant. Optional settings: `REPLAY_SPACING_H` (hours between trades per market, default 4), `REPLAY_SEED`, `REPLAY_THREADS`.
 
+Two more modes use the same engine:
+
+- **Signal entries:** `cargo run --release -p replay -- signals <replay.jsonl> [alert|breakout]`. Uses momentum-labs alert or breakout entries, with a random-entry control on the same markets. Entries happen at the signal bar's close, so there's no look-ahead.
+- **Real trades:** `cargo run --release -p replay -- trades <file.json>`. Replays recorded trades (entry, original SL/TP, candles) and compares the result with what actually happened.
+
 ## Layout
 
 ```

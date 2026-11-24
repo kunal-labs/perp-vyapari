@@ -9,9 +9,14 @@
 //!   REPLAY_DATA_DIR=~/scratchpad/momentum-labs/data/history \
 //!   REPLAY_OUT=/tmp/replay  REPLAY_SPACING_H=4  REPLAY_SEED=7  REPLAY_THREADS=6 \
 //!   cargo run --release -p replay
+//!
+//! Real trades: `cargo run --release -p replay -- trades <file.json>` (see `own.rs`).
+//! Signal entries: `cargo run --release -p replay -- signals <replay.jsonl> [alert|breakout]` (see `signals.rs`).
 
 mod data;
+mod own;
 mod report;
+mod signals;
 
 use std::{path::PathBuf, sync::Mutex, time::Instant};
 
@@ -238,7 +243,25 @@ fn run_market(m: &Market, spacing_h: i64, seed: u64) -> Result<Vec<Row>> {
 }
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("trades") {
+        let file = args.get(2).context("usage: replay trades <file.json>")?;
+        println!("{}", own::run(file)?);
+        return Ok(());
+    }
     let home = std::env::var("HOME").unwrap_or_default();
+    if args.get(1).map(String::as_str) == Some("signals") {
+        let file = args
+            .get(2)
+            .context("usage: replay signals <replay.jsonl> [alert|breakout]")?;
+        let kind = args.get(3).map(String::as_str).unwrap_or("alert");
+        let dir = PathBuf::from(
+            std::env::var("REPLAY_DATA_DIR")
+                .unwrap_or_else(|_| format!("{home}/scratchpad/momentum-labs/data/history")),
+        );
+        println!("{}", signals::run(file, &dir, kind)?);
+        return Ok(());
+    }
     let data_dir = PathBuf::from(
         std::env::var("REPLAY_DATA_DIR")
             .unwrap_or_else(|_| format!("{home}/scratchpad/momentum-labs/data/history")),

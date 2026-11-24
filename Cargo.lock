@@ -1797,6 +1797,8 @@ dependencies = [
  "anyhow",
  "arrow-array",
  "parquet",
+ "serde",
+ "serde_json",
  "smart-sltp",
 ]
 
