@@ -5,10 +5,16 @@ services:
       context: ..
       dockerfile: deploy/Containerfile.venue-hl
     image: perp-vyapari/venue-hl:dev
+    # run.sh makes the invoking host user own this uid, so 0600 secret files are readable.
+    user: "${CONTAINER_USER:-65532:65532}"
     environment:
       HL_ADDRESS: ${HL_ADDRESS:?set HL_ADDRESS in deploy/.env}
       HL_TESTNET: ${HL_TESTNET:-true}
       VENUE_LISTEN_ADDR: 0.0.0.0:50051
+      POLL_SECS: ${POLL_SECS:-10}
+      LIQ_ALERT_PCT: ${LIQ_ALERT_PCT:-5}
+      FUNDING_ALERT_APR_PCT: ${FUNDING_ALERT_APR_PCT:-100}
+      ALERT_REPEAT_MINS: ${ALERT_REPEAT_MINS:-30}
       RUST_LOG: ${RUST_LOG:-info}
     restart: unless-stopped
     # No published port: only the gateway talks to the venue, on the compose network.
@@ -18,10 +24,19 @@ services:
       context: ..
       dockerfile: deploy/Containerfile.gateway
     image: perp-vyapari/gateway:dev
+    user: "${CONTAINER_USER:-65532:65532}"
     environment:
       VENUES: hl=http://venue-hl:50051
-      HEALTH_SECS: ${HEALTH_SECS:-30}
+      TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:?set TELEGRAM_OWNER_ID in deploy/.env}
+      TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
       RUST_LOG: ${RUST_LOG:-info}
+    secrets:
+      - telegram_token
     depends_on:
       - venue-hl
     restart: unless-stopped
+
+secrets:
+  # Only the gateway gets the Telegram token; only venue-hl gets exchange keys.
+  telegram_token:
+    file: ${TELEGRAM_TOKEN_HOST_FILE:?set TELEGRAM_TOKEN_HOST_FILE in deploy/.env}

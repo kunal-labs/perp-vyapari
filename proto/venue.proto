@@ -30,6 +30,11 @@ service VenueService {
   // Close (fully or partially) a position with a reduce-only order.
   rpc ClosePosition(ClosePositionRequest) returns (ClosePositionResponse);
 
+  // User-defined price alerts (no exchange writes; no confirmation needed).
+  rpc AddPriceAlert(AddPriceAlertRequest) returns (PriceAlert);
+  rpc ListPriceAlerts(ListPriceAlertsRequest) returns (ListPriceAlertsResponse);
+  rpc RemovePriceAlert(RemovePriceAlertRequest) returns (RemovePriceAlertResponse);
+
   // Server-push events: fills, rule actions, alerts, heartbeats.
   rpc StreamEvents(StreamEventsRequest) returns (stream Event);
 }
@@ -59,6 +64,10 @@ message Account {
   string withdrawable = 3;
   string unrealized_pnl = 4;
   int64 as_of_ms = 5;
+  // Collateral backing perps when it lives outside the perps ledger
+  // (e.g. spot USDC on a Hyperliquid unified account). Empty if not applicable.
+  string total_collateral = 6;
+  string maintenance_margin = 7;
 }
 
 message ListPositionsRequest {}
@@ -73,6 +82,8 @@ message Position {
   string leverage = 7;
   string margin_used = 8;
   bool has_exchange_stop = 9; // a reduce-only stop exists on the exchange
+  string stop_price = 10;     // tightest exchange-side stop trigger, empty if none
+  string funding_rate_1h = 11; // current hourly funding rate (venue convention)
 }
 
 message ListPositionsResponse {
@@ -182,6 +193,40 @@ message ClosePositionResponse {
   string avg_price = 2;
 }
 
+enum PriceDirection {
+  PRICE_DIRECTION_UNSPECIFIED = 0;
+  PRICE_DIRECTION_ABOVE = 1; // fire when mark >= price
+  PRICE_DIRECTION_BELOW = 2; // fire when mark <= price
+}
+
+message AddPriceAlertRequest {
+  string symbol = 1;
+  PriceDirection direction = 2;
+  string price = 3;
+}
+
+message PriceAlert {
+  string alert_id = 1;
+  string symbol = 2;
+  PriceDirection direction = 3;
+  string price = 4;
+  int64 created_ms = 5;
+}
+
+message ListPriceAlertsRequest {}
+
+message ListPriceAlertsResponse {
+  repeated PriceAlert alerts = 1;
+}
+
+message RemovePriceAlertRequest {
+  string alert_id = 1;
+}
+
+message RemovePriceAlertResponse {
+  bool removed = 1;
+}
+
 message StreamEventsRequest {}
 
 enum Severity {
@@ -223,6 +268,7 @@ message RuleAction {
 
 message Alert {
   string symbol = 1; // optional
-  string code = 2;   // e.g. "NO_STOP", "LIQ_DISTANCE", "RECONCILE_MISMATCH"
+  // NO_STOP, LIQ_DISTANCE, FUNDING, PRICE, VENUE_API, RECONCILE_MISMATCH
+  string code = 2;
   string message = 3;
 }
