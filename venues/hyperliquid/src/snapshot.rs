@@ -1,13 +1,57 @@
 //! A point-in-time view of the account, and pure mappings to the venue contract.
 //!
 //! Everything here is deterministic and unit-tested; network I/O lives in `hl.rs`.
+//!
+//! Hyperliquid has several perp dexes: the main one plus HIP-3 dexes such as `xyz`
+//! (stocks, commodities). Each has its own clearinghouse state, open orders and
+//! markets. A snapshot merges all of them into one account view.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::Result;
+use futures::future::try_join_all;
 use venue_proto::v1::{Account, Order, OrderKind, Position};
 
-use crate::hl::{AssetCtx, ClearinghouseState, FrontendOrder, InfoClient, Meta, SpotState};
+use crate::hl::{
+    AssetCtx, ClearinghouseState, FrontendOrder, InfoClient, MarginSummary, Meta, SpotState,
+};
+
+/// What a fetch must cover beyond dexes where the account holds positions.
+#[derive(Debug, Clone, Default)]
+pub struct Scope {
+    /// Fetch open orders on every dex (for `/orders`), not just dexes with positions.
+    pub all_orders: bool,
+    /// Extra dexes whose markets are needed (e.g. for price alerts on `xyz:NVDA`).
+    pub extra_dexes: Vec<String>,
+}
+
+/// Sum per-dex clearinghouse states into one (positions concatenated).
+pub fn merge_states(states: Vec<ClearinghouseState>) -> ClearinghouseState {
+    let f = |s: &str| s.parse::<f64>().unwrap_or(0.0);
+    let mut acc = (0.0, 0.0, 0.0, 0.0, 0.0);
+    let mut positions = Vec::new();
+    let mut time = 0;
+    for s in states {
+        acc.0 += f(&s.margin_summary.account_value);
+        acc.1 += f(&s.margin_summary.total_margin_used);
+        acc.2 += f(&s.margin_summary.total_ntl_pos);
+        acc.3 += f(&s.cross_maintenance_margin_used);
+        acc.4 += f(&s.withdrawable);
+        positions.extend(s.asset_positions);
+        time = time.max(s.time);
+    }
+    ClearinghouseState {
+        margin_summary: MarginSummary {
+            account_value: fmt_num(acc.0),
+            total_margin_used: fmt_num(acc.1),
+            total_ntl_pos: fmt_num(acc.2),
+        },
+        cross_maintenance_margin_used: fmt_num(acc.3),
+        withdrawable: fmt_num(acc.4),
+        asset_positions: positions,
+        time,
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Market {
@@ -25,15 +69,73 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    pub async fn fetch(client: &InfoClient, user: &str) -> Result<Self> {
-        let (state, spot, orders, meta, abstraction) = tokio::try_join!(
-            client.clearinghouse_state(user),
+    pub async fn fetch(client: &InfoClient, user: &str, scope: &Scope) -> Result<Self> {
+        let dexes = client.perp_dexes().await?;
+        let states =
+            try_join_all(dexes.iter().map(|d| client.clearinghouse_state(user, d))).await?;
+
+        // Dexes that need markets (marks, funding) and orders (stop detection).
+        let mut active: BTreeSet<String> = BTreeSet::from([String::new()]);
+        for (d, s) in dexes.iter().zip(&states) {
+            if !s.asset_positions.is_empty() {
+                active.insert(d.clone());
+            }
+        }
+        active.extend(
+            scope
+                .extra_dexes
+                .iter()
+                .filter(|d| dexes.contains(d))
+                .cloned(),
+        );
+        let order_dexes: Vec<&String> = if scope.all_orders {
+            dexes.iter().collect()
+        } else {
+            active.iter().collect()
+        };
+
+        let (spot, abstraction, orders, metas) = tokio::try_join!(
             client.spot_state(user),
-            client.open_orders(user),
-            client.meta_and_ctxs(),
             client.user_abstraction(user),
+            try_join_all(order_dexes.iter().map(|d| client.open_orders(user, d))),
+            try_join_all(active.iter().map(|d| client.meta_and_ctxs(d))),
         )?;
-        Ok(Self::from_parts(state, spot, orders, meta, abstraction))
+        Ok(Self::from_dexes(
+            states,
+            spot,
+            orders.into_iter().flatten().collect(),
+            metas,
+            abstraction,
+        ))
+    }
+
+    /// Build from several dexes' responses.
+    pub fn from_dexes(
+        states: Vec<ClearinghouseState>,
+        spot: SpotState,
+        orders: Vec<FrontendOrder>,
+        metas: Vec<(Meta, Vec<AssetCtx>)>,
+        abstraction: String,
+    ) -> Self {
+        let mut snap = Self::from_parts(
+            merge_states(states),
+            spot,
+            orders,
+            (Meta { universe: vec![] }, vec![]),
+            abstraction,
+        );
+        for (meta, ctxs) in metas {
+            for (a, c) in meta.universe.into_iter().zip(ctxs) {
+                snap.markets.insert(
+                    a.name,
+                    Market {
+                        mark_px: c.mark_px,
+                        funding_1h: c.funding,
+                    },
+                );
+            }
+        }
+        snap
     }
 
     pub fn from_parts(
@@ -276,6 +378,47 @@ pub(crate) mod tests {
         assert_eq!(all[2].kind(), OrderKind::TakeProfitMarket);
         assert_eq!(all[3].trigger_price, "");
         assert_eq!(s.orders("eth").len(), 1);
+    }
+
+    #[test]
+    fn merges_hip3_dex_into_one_view() {
+        let main: ClearinghouseState = serde_json::from_str(STATE).unwrap();
+        let xyz: ClearinghouseState = serde_json::from_str(
+            r#"{"marginSummary":{"accountValue":"100.0","totalNtlPos":"500.0","totalRawUsd":"0","totalMarginUsed":"50.0"},
+              "crossMaintenanceMarginUsed":"10.0","withdrawable":"5.0",
+              "assetPositions":[{"type":"oneWay","position":{"coin":"xyz:NVDA","szi":"-3.0","leverage":{"type":"cross","value":10},
+                "entryPx":"180.0","positionValue":"540.0","unrealizedPnl":"-6.0","liquidationPx":"230.0","marginUsed":"54.0"}}],
+              "time":1795222383999}"#,
+        )
+        .unwrap();
+        let xyz_orders: Vec<FrontendOrder> = serde_json::from_str(
+            r#"[{"coin":"xyz:NVDA","side":"B","limitPx":"200","sz":"3","oid":77,"timestamp":0,"isTrigger":true,"triggerPx":"187.0","reduceOnly":true,"orderType":"Stop Market"}]"#,
+        )
+        .unwrap();
+        let xyz_meta: (Meta, Vec<AssetCtx>) = serde_json::from_str(
+            r#"[{"universe":[{"szDecimals":3,"name":"xyz:NVDA","maxLeverage":20}]},[{"funding":"0.00001","markPx":"182.0"}]]"#,
+        )
+        .unwrap();
+        let mut orders: Vec<FrontendOrder> = serde_json::from_str(ORDERS).unwrap();
+        orders.extend(xyz_orders);
+        let snap = Snapshot::from_dexes(
+            vec![main, xyz],
+            serde_json::from_str(SPOT).unwrap(),
+            orders,
+            vec![serde_json::from_str(META).unwrap(), xyz_meta],
+            "unifiedAccount".into(),
+        );
+        let a = snap.account();
+        assert_eq!(a.account_value, "420.5");
+        assert_eq!(a.margin_used, "350");
+        assert_eq!(a.unrealized_pnl, "-85.5");
+        let ps = snap.positions();
+        assert_eq!(ps.len(), 3);
+        let nvda = ps.iter().find(|p| p.symbol == "xyz:NVDA").unwrap();
+        assert!(nvda.has_exchange_stop);
+        assert_eq!(nvda.stop_price, "187");
+        assert_eq!(nvda.mark_price, "182.0");
+        assert_eq!(snap.state.time, 1795222383999);
     }
 
     #[test]

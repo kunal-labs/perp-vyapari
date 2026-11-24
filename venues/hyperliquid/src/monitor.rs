@@ -18,9 +18,9 @@ use crate::alerts::Raised;
 use crate::{
     alerts::{AlertEngine, Thresholds},
     config::Config,
-    hl::{InfoClient, UserFill},
+    hl::{dex_of, InfoClient, UserFill},
     now_ms,
-    snapshot::Snapshot,
+    snapshot::{Scope, Snapshot},
 };
 
 /// State shared between the gRPC service and the monitor.
@@ -67,7 +67,18 @@ pub async fn run(cfg: Config, client: InfoClient, shared: Arc<Shared>) {
 
     loop {
         tick.tick().await;
-        match Snapshot::fetch(&client, &cfg.address).await {
+        // Price alerts on HIP-3 markets (e.g. xyz:NVDA) need that dex's prices too.
+        let scope = Scope {
+            all_orders: false,
+            extra_dexes: shared
+                .price_alerts
+                .lock()
+                .await
+                .iter()
+                .map(|a| dex_of(&a.symbol).to_string())
+                .collect(),
+        };
+        match Snapshot::fetch(&client, &cfg.address, &scope).await {
             Ok(snap) => {
                 if fails >= FAILS_BEFORE_ALERT {
                     info!("hyperliquid API recovered");

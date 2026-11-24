@@ -51,7 +51,7 @@ async fn read_views_map_fake_account() {
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(a.account_value, "320.5");
+    assert_eq!(a.account_value, "420.5", "main + xyz dex");
     assert_eq!(a.total_collateral, "400.25");
 
     let ps = c
@@ -60,7 +60,7 @@ async fn read_views_map_fake_account() {
         .unwrap()
         .into_inner()
         .positions;
-    assert_eq!(ps.len(), 2);
+    assert_eq!(ps.len(), 3, "BTC, ETH on main + xyz:NVDA");
     assert!(ps[0].has_exchange_stop);
     assert!(!ps[1].has_exchange_stop);
 
@@ -72,7 +72,7 @@ async fn read_views_map_fake_account() {
         .unwrap()
         .into_inner()
         .orders;
-    assert_eq!(os.len(), 1);
+    assert_eq!(os.len(), 2, "orders from every dex");
 }
 
 #[tokio::test]

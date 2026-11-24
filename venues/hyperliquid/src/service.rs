@@ -26,7 +26,13 @@ use venue_proto::v1::{
     StreamEventsRequest,
 };
 
-use crate::{config::Config, hl::InfoClient, monitor::Shared, now_ms, snapshot::Snapshot};
+use crate::{
+    config::Config,
+    hl::{dex_of, InfoClient},
+    monitor::Shared,
+    now_ms,
+    snapshot::{Scope, Snapshot},
+};
 
 pub const VENUE: &str = "hyperliquid";
 const MAX_PRICE_ALERTS: usize = 100;
@@ -48,8 +54,54 @@ impl HyperliquidVenue {
         }
     }
 
-    async fn snapshot(&self) -> Result<Snapshot, Status> {
-        Snapshot::fetch(&self.client, &self.cfg.address)
+    /// Resolve a user-typed symbol to the venue's exact market name. `xyz:nvda` is looked
+    /// up on the `xyz` dex; a bare `nvda` falls back to a unique match on any HIP-3 dex.
+    async fn resolve_symbol(&self, typed: &str) -> Result<String, Status> {
+        let unavailable = |e: anyhow::Error| Status::unavailable(format!("{e:#}"));
+        let find = |meta: &crate::hl::Meta, name: &str| {
+            meta.universe
+                .iter()
+                .find(|a| a.name.eq_ignore_ascii_case(name))
+                .map(|a| a.name.clone())
+        };
+        let dex = dex_of(typed).to_ascii_lowercase();
+        let (meta, _) = self.client.meta_and_ctxs(&dex).await.map_err(unavailable)?;
+        if let Some(name) = find(&meta, typed) {
+            return Ok(name);
+        }
+        if dex.is_empty() {
+            let mut hits = Vec::new();
+            for d in self
+                .client
+                .perp_dexes()
+                .await
+                .map_err(unavailable)?
+                .iter()
+                .filter(|d| !d.is_empty())
+            {
+                let (meta, _) = self.client.meta_and_ctxs(d).await.map_err(unavailable)?;
+                if let Some(name) = find(&meta, &format!("{d}:{typed}")) {
+                    hits.push(name);
+                }
+            }
+            match hits.len() {
+                1 => return Ok(hits.remove(0)),
+                n if n > 1 => {
+                    return Err(Status::failed_precondition(format!(
+                        "{typed:?} trades on several dexes ({}); use the full name",
+                        hits.join(", ")
+                    )))
+                }
+                _ => {}
+            }
+        }
+        Err(Status::not_found(format!(
+            "unknown Hyperliquid perp {typed:?}"
+        )))
+    }
+
+    async fn snapshot(&self, scope: Scope) -> Result<Snapshot, Status> {
+        Snapshot::fetch(&self.client, &self.cfg.address, &scope)
             .await
             .map_err(|e| Status::unavailable(format!("{e:#}")))
     }
@@ -80,14 +132,16 @@ impl VenueService for HyperliquidVenue {
         &self,
         _: Request<GetAccountRequest>,
     ) -> Result<Response<Account>, Status> {
-        Ok(Response::new(self.snapshot().await?.account()))
+        Ok(Response::new(
+            self.snapshot(Scope::default()).await?.account(),
+        ))
     }
 
     async fn list_positions(
         &self,
         _: Request<ListPositionsRequest>,
     ) -> Result<Response<ListPositionsResponse>, Status> {
-        let s = self.snapshot().await?;
+        let s = self.snapshot(Scope::default()).await?;
         Ok(Response::new(ListPositionsResponse {
             positions: s.positions(),
             as_of_ms: s.state.time,
@@ -98,7 +152,12 @@ impl VenueService for HyperliquidVenue {
         &self,
         req: Request<ListOrdersRequest>,
     ) -> Result<Response<ListOrdersResponse>, Status> {
-        let s = self.snapshot().await?;
+        let s = self
+            .snapshot(Scope {
+                all_orders: true,
+                ..Default::default()
+            })
+            .await?;
         Ok(Response::new(ListOrdersResponse {
             orders: s.orders(&req.into_inner().symbol),
             as_of_ms: s.state.time,
@@ -146,17 +205,7 @@ impl VenueService for HyperliquidVenue {
             Ok(p) if p > 0.0 && p.is_finite() => {}
             _ => return Err(Status::invalid_argument("price must be a positive number")),
         }
-        let (meta, _) = self
-            .client
-            .meta_and_ctxs()
-            .await
-            .map_err(|e| Status::unavailable(format!("{e:#}")))?;
-        let symbol = meta
-            .universe
-            .iter()
-            .find(|a| a.name.eq_ignore_ascii_case(&r.symbol))
-            .map(|a| a.name.clone())
-            .ok_or_else(|| Status::not_found(format!("unknown Hyperliquid perp {:?}", r.symbol)))?;
+        let symbol = self.resolve_symbol(&r.symbol).await?;
 
         let mut alerts = self.shared.price_alerts.lock().await;
         if alerts.len() >= MAX_PRICE_ALERTS {

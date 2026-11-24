@@ -22,6 +22,8 @@ Telegram  <->  gateway (Rust)  <-- gRPC: proto/venue.proto -->  venue-hl (Rust) 
 
 The bot answers only its owner (by numeric Telegram user id) in a private chat, and ignores everyone else. `[venue]` is optional; leave it out to query all venues.
 
+Hyperliquid positions and orders are read from **every perp dex**: the main one plus HIP-3 dexes such as `xyz` (stocks, commodities). HIP-3 markets use their full name, e.g. `/alert xyz:NVDA above 200`. A bare name like `gold` works when it is unique across dexes; otherwise the bot lists the matches.
+
 | Command | What it shows |
 |---|---|
 | `/acct [venue]` | Equity, unrealised PnL, margin, withdrawable; unified-account USDC collateral |
